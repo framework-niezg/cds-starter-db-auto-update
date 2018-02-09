@@ -101,10 +101,10 @@ public class DbVersionUpdater implements ApplicationRunner,ResourceLoaderAware,I
                 logger.info("开始数据库表结构自动升级，从版本{}到版本{}",checkResult.getFromVersion(),checkResult.getToVersion());
                 executeDBUpdate(checkResult);
             }
-            logger.info("当前系统数据库表已升级到最新版本{}，数据库类型为{}",checkResult.getToVersion(),jdbcDatastore.getDatastoreType());
+            logger.info("当前系统数据库表已升级到最新版本{}，数据库类型为{}",checkResult.getToVersion(),jdbcDatastore.getMetaDataNavigator().getDsType());
         }
         catch (Exception e){
-            logger.error("数据库版本升级失败，数据库类型为"+jdbcDatastore.getDatastoreType(),e);
+            logger.error("数据库版本升级失败，数据库类型为"+jdbcDatastore.getMetaDataNavigator().getDsType(),e);
             throw new IllegalStateException("数据库版本升级失败",e);
         }
     }
@@ -115,7 +115,7 @@ public class DbVersionUpdater implements ApplicationRunner,ResourceLoaderAware,I
         while (checkResult.needUpdate()){
             executeVersion = checkResult.getFromVersion() + 1;
             try {
-                file = getExecuteSQLFile(executeVersion, jdbcDatastore.getDatastoreType());
+                file = getExecuteSQLFile(executeVersion, jdbcDatastore.getMetaDataNavigator().getDsType());
                 Integer count = Files.readLines(file, Charset.forName("UTF-8"), new LineProcessor<Integer>() {
                     private Integer count = 0;
                     private Integer lineNumber = 0;
@@ -126,7 +126,7 @@ public class DbVersionUpdater implements ApplicationRunner,ResourceLoaderAware,I
                             lineNumber++;
                             line = prepareProcessLine(line);
                             if (!skipProcess(line)) {
-                                count += jdbcDatastore.update(line);
+                                count += jdbcDatastore.getNativeSqlExecutor().update(line);
                             }
                         } catch (SQLException sqlException) {
                             throw new IOException("执行sql脚本第" + lineNumber + "行出错",sqlException);
@@ -157,7 +157,7 @@ public class DbVersionUpdater implements ApplicationRunner,ResourceLoaderAware,I
                         return skip;
                     }
                 });
-                completeVersionUpdate(jdbcDatastore.getJdbcDatastoreConnection().getDataContext(),checkResult,executeVersion,count);
+                completeVersionUpdate(jdbcDatastore.getUpdateableDataContext(),checkResult,executeVersion,count);
             }
             catch (IOException e){
                 throw new IllegalStateException("数据库脚本升级到版本"+executeVersion+"失败，请通知管理员处理！",e);
@@ -202,9 +202,9 @@ public class DbVersionUpdater implements ApplicationRunner,ResourceLoaderAware,I
         CheckResult checkResult = new CheckResult(currentDBVersion,currentDBVersion);
         //还未创建版本管理表
         if(metaDataNavigator.getTable(versionTableName) == null){
-            createVersionTable(jdbcDatastore.getJdbcDatastoreConnection().getUpdateableDataContext());
+            createVersionTable(jdbcDatastore.getUpdateableDataContext());
         }
-        Integer fromVersion = fromVersion(jdbcDatastore.getJdbcDatastoreConnection().getUpdateableDataContext());
+        Integer fromVersion = fromVersion(jdbcDatastore.getUpdateableDataContext());
         checkResult.setFromVersion(fromVersion);
         return checkResult;
     }
