@@ -2,10 +2,10 @@ package com.zjcds.common.db.au;
 
 import com.google.common.io.Files;
 import com.google.common.io.LineProcessor;
-import com.zjcds.common.db.au.datastore.MetaDataNavigator;
-import com.zjcds.common.db.au.datastore.enums.DsType;
-import com.zjcds.common.db.au.datastore.factory.DataStoreFactory;
-import com.zjcds.common.db.au.datastore.impl.JdbcDatastore;
+import com.zjcds.common.datastore.MetaDataNavigator;
+import com.zjcds.common.datastore.enums.DsType;
+import com.zjcds.common.datastore.factory.DataStoreFactory;
+import com.zjcds.common.datastore.impl.JdbcDatastore;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
