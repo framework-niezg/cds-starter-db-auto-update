@@ -3,6 +3,10 @@ package com.zjcds.common.db.au;
 import com.google.common.io.Files;
 import com.google.common.io.LineProcessor;
 import com.zjcds.common.datastore.MetaDataNavigator;
+import com.zjcds.common.datastore.create.Column;
+import com.zjcds.common.datastore.create.Table;
+import com.zjcds.common.datastore.dml.ColumnValue;
+import com.zjcds.common.datastore.dml.ColumnValues;
 import com.zjcds.common.datastore.enums.DsType;
 import com.zjcds.common.datastore.factory.DataStoreFactory;
 import com.zjcds.common.datastore.impl.JdbcDatastore;
@@ -12,18 +16,13 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.metamodel.DataContext;
-import org.apache.metamodel.UpdateCallback;
-import org.apache.metamodel.UpdateScript;
-import org.apache.metamodel.UpdateableDataContext;
 import org.apache.metamodel.data.DataSet;
 import org.apache.metamodel.data.Row;
 import org.apache.metamodel.schema.ColumnType;
-import org.apache.metamodel.schema.Table;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.ResourceLoaderAware;
@@ -57,22 +56,10 @@ public class DbVersionUpdater implements ApplicationRunner,ResourceLoaderAware,I
     private ResourceLoader resourceLoader;
     @Autowired
     private ConversionService conversionService;
+    @Autowired
+    private DBAutoUpdateProperties dbAutoUpdateProperties;
 
-    private static final String DefaultVersionTableName = "t_sys_db_version";
-
-    private static final String DefaultVersionFieldName = "ver";
-    //版本表名
-    private String versionTableName = DefaultVersionTableName;
-    //版本字段名
-    private String versionFieldName = DefaultVersionFieldName;
-    //初始化版本
-    private Integer initVersion = 0;
-
-    @Value("${com.zjcds.db.sql}")
     private String sqlDir;
-    @Value("${com.zjcds.db.currentVersion}")
-    private Integer currentDBVersion;
-
     @Override
     public void setResourceLoader(ResourceLoader resourceLoader) {
         this.resourceLoader = resourceLoader;
@@ -84,13 +71,14 @@ public class DbVersionUpdater implements ApplicationRunner,ResourceLoaderAware,I
 
     @Override
     public void afterPropertiesSet() throws Exception {
+        sqlDir = dbAutoUpdateProperties.getSql();
         Assert.hasText(sqlDir,"数据库升级sql脚本所在目录位置未定义！");
         sqlDir = StringUtils.trim(sqlDir);
         if(! StringUtils.endsWith(sqlDir,"/")){
             sqlDir += sqlDir + "/";
         }
-        Assert.notNull(currentDBVersion,"当前系统对应的数据库版本未定义！");
-        Assert.isTrue(currentDBVersion > 0,"设置的当前数据库版本不能小于零！");
+        Assert.notNull(dbAutoUpdateProperties.getCurrentVersion(),"当前系统对应的数据库版本未定义！");
+        Assert.isTrue(dbAutoUpdateProperties.getCurrentVersion() > 0,"设置的当前数据库版本不能小于零！");
     }
 
     @Override
@@ -157,7 +145,7 @@ public class DbVersionUpdater implements ApplicationRunner,ResourceLoaderAware,I
                         return skip;
                     }
                 });
-                completeVersionUpdate(jdbcDatastore.getUpdateableDataContext(),checkResult,executeVersion,count);
+                completeVersionUpdate(checkResult,executeVersion,count);
             }
             catch (IOException e){
                 throw new IllegalStateException("数据库脚本升级到版本"+executeVersion+"失败，请通知管理员处理！",e);
@@ -165,25 +153,18 @@ public class DbVersionUpdater implements ApplicationRunner,ResourceLoaderAware,I
         }
     }
 
-    private void completeVersionUpdate(UpdateableDataContext updateableDataContext,CheckResult checkResult,Integer executeVersion,Integer updateCount) {
-        updateableDataContext.executeUpdate(new UpdateScript() {
-            @Override
-            public void run(UpdateCallback callback) {
-                callback.update(updateableDataContext
-                        .getDefaultSchema().getName(),versionTableName)
-                        .value(versionFieldName,executeVersion)
-                        .execute();
-            }
-        });
+    private void completeVersionUpdate(CheckResult checkResult,Integer executeVersion,Integer updateCount) {
+        jdbcDatastore.getMetaSqlExecutor().update(dbAutoUpdateProperties.getVersionFieldName(),ColumnValues.newColumnValues()
+                                                                                .addColumnValue(new ColumnValue(dbAutoUpdateProperties.getVersionFieldName(),executeVersion)));
+        logger.info("数据库已经升级到版本{}，完成{}条数据更新！",executeVersion,updateCount);
         //执行下一版本
         checkResult.setFromVersion(executeVersion);
-        logger.info("数据库已经升级到版本{}，完成{}条数据更新！",executeVersion,updateCount);
     }
 
     private File getExecuteSQLFile(Integer executeVersion , DsType dsType) {
         Assert.notNull(dsType,"数据源类型不能为空！");
         Assert.notNull(executeVersion,"执行脚本版本号不能为空！");
-        String filePath = getSqlDir() +dsType.name()+"_"+executeVersion+".sql";
+        String filePath = sqlDir +dsType.name()+"_"+executeVersion+".sql";
         logger.info("升级脚本路径为{}",filePath);
         try {
             return resourceLoader.getResource(filePath).getFile();
@@ -199,10 +180,10 @@ public class DbVersionUpdater implements ApplicationRunner,ResourceLoaderAware,I
      */
     private CheckResult checkDBUpdate() {
         MetaDataNavigator metaDataNavigator = jdbcDatastore.getMetaDataNavigator();
-        CheckResult checkResult = new CheckResult(currentDBVersion,currentDBVersion);
+        CheckResult checkResult = new CheckResult(dbAutoUpdateProperties.getCurrentVersion(),dbAutoUpdateProperties.getCurrentVersion());
         //还未创建版本管理表
-        if(metaDataNavigator.getTable(versionTableName) == null){
-            createVersionTable(jdbcDatastore.getUpdateableDataContext());
+        if(metaDataNavigator.getTable(dbAutoUpdateProperties.getVersionTableName()) == null){
+            createVersionTable();
         }
         Integer fromVersion = fromVersion(jdbcDatastore.getUpdateableDataContext());
         checkResult.setFromVersion(fromVersion);
@@ -210,11 +191,11 @@ public class DbVersionUpdater implements ApplicationRunner,ResourceLoaderAware,I
     }
 
     private Integer fromVersion(DataContext dataContext){
-        DataSet dataSet = dataContext.query().from(dataContext.getDefaultSchema(),versionTableName)
-                            .select(versionFieldName).execute();
+        DataSet dataSet = dataContext.query().from(dataContext.getDefaultSchema(),dbAutoUpdateProperties.getVersionTableName())
+                            .select(dbAutoUpdateProperties.getVersionFieldName()).execute();
         List<Row> rows = dataSet.toRows();
         if(rows == null || rows.size() != 1){
-            throw new IllegalStateException("版本表"+versionTableName+"中记录不正确！");
+            throw new IllegalStateException("版本表"+dbAutoUpdateProperties.getVersionTableName()+"中记录不正确！");
         }
         Row row = rows.get(0);
         Integer fromVersion = conversionService.convert(row.getValue(0),Integer.class);
@@ -222,15 +203,15 @@ public class DbVersionUpdater implements ApplicationRunner,ResourceLoaderAware,I
         return fromVersion;
     }
 
-    private void createVersionTable(UpdateableDataContext updateableDataContext){
-        updateableDataContext.executeUpdate(new UpdateScript() {
-            @Override
-            public void run(UpdateCallback callback) {
-                Table table = callback.createTable(callback.getDataContext().getDefaultSchema(),versionTableName)
-                        .withColumn(versionFieldName).ofType(ColumnType.INTEGER).execute();
-                callback.insertInto(table).value(versionFieldName,initVersion).execute();
-            }
-        });
+    private void createVersionTable(){
+        //创建版本表
+        jdbcDatastore.getMetaSqlExecutor().createTable(Table.newBuilder()
+                                                            .tableName(dbAutoUpdateProperties.getVersionTableName())
+                                                            .addColumn(Column.newBuilder().name(dbAutoUpdateProperties.getVersionFieldName()).type(ColumnType.INTEGER))
+                                                            .build());
+        //插入初始化版本号
+        jdbcDatastore.getMetaSqlExecutor().insert(dbAutoUpdateProperties.getVersionTableName(), ColumnValues.newColumnValues()
+                                                                                .addColumnValue(new ColumnValue(dbAutoUpdateProperties.getVersionFieldName(),dbAutoUpdateProperties.getInitVersion())));
     }
 
     @Getter
