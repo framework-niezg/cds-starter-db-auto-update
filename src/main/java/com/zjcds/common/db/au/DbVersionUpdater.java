@@ -154,7 +154,7 @@ public class DbVersionUpdater implements ApplicationRunner,ResourceLoaderAware,I
     }
 
     private void completeVersionUpdate(CheckResult checkResult,Integer executeVersion,Integer updateCount) {
-        jdbcDatastore.getMetaSqlExecutor().update(dbAutoUpdateProperties.getVersionFieldName(),ColumnValues.newColumnValues()
+        jdbcDatastore.getMetaSqlExecutor().update(dbAutoUpdateProperties.getVersionTableName(),ColumnValues.newColumnValues()
                                                                                 .addColumnValue(new ColumnValue(dbAutoUpdateProperties.getVersionFieldName(),executeVersion)));
         logger.info("数据库已经升级到版本{}，完成{}条数据更新！",executeVersion,updateCount);
         //执行下一版本

@@ -17,7 +17,7 @@ public class DBAutoUpdateProperties {
 
     private static final String DefaultVersionFieldName = "ver";
 
-    private String versionTableName = DefaultVersionFieldName;
+    private String versionTableName = DefaultVersionTableName;
 
     //版本字段名
     private String versionFieldName = DefaultVersionFieldName;
